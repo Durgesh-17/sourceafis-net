@@ -20,14 +20,10 @@ jobs:
 
       - name: Auto-Generate Console Wrapper Application
         run: |
-          # 1. Create a clean console project
           dotnet new console -n FingerprintCli -o ./FingerprintCli
           cd FingerprintCli
-          
-          # 2. Add the official SourceAFIS package dependency
           dotnet add package SourceAFIS --version 3.14.0
           
-          # 3. Overwrite Program.cs with the CLI logic
           cat << 'EOF' > Program.cs
           using System;
           using System.IO;
@@ -37,53 +33,41 @@ jobs:
           {
               static int Main(string[] args)
               {
-                  if (args.Length < 2)
-                  {
-                      Console.WriteLine("Error: Missing parameters.");
-                      Console.WriteLine("Usage: ./FingerprintCli <path_to_probe.png> <path_to_candidate.png>");
-                      return 1;
-                  }
-
-                  string probePath = args[0];
-                  string candidatePath = args[1];
-
-                  if (!File.Exists(probePath) || !File.Exists(candidatePath))
-                  {
-                      Console.WriteLine("Error: One or both files do not exist.");
-                      return 1;
-                  }
-
                   try
                   {
-                      // Load images (SourceAFIS handles decoding standard image bytes)
-                      var probeImage = new FingerprintImage(File.ReadAllBytes(probePath));
-                      var candidateImage = new FingerprintImage(File.ReadAllBytes(candidatePath));
-
-                      // Extract minutiae templates
-                      var probeTemplate = new FingerprintTemplate(probeImage);
-                      var candidateTemplate = new FingerprintTemplate(candidateImage);
-
-                      // Run the biometric 1:1 match evaluation
-                      var matcher = new FingerprintMatcher(probeTemplate);
-                      double score = matcher.Match(candidateTemplate);
-
-                      Console.WriteLine($"Similarity Score: {score:F2}");
-                      
-                      // Match threshold recommended by SourceAFIS is 40 (FMR 0.01%)
-                      if (score >= 40.0)
+                      using (var stdin = Console.OpenStandardInput())
+                      using (var reader = new BinaryReader(stdin))
                       {
-                          Console.WriteLine("STATUS: MATCH");
-                          return 0; 
-                      }
-                      else
-                      {
-                          Console.WriteLine("STATUS: MISMATCH");
-                          return 2; 
+                          // Read Image 1 Metadata & Raw Pixels
+                          int width1 = reader.ReadInt32();
+                          int height1 = reader.ReadInt32();
+                          int len1 = width1 * height1;
+                          byte[] pixels1 = reader.ReadBytes(len1);
+
+                          // Read Image 2 Metadata & Raw Pixels
+                          int width2 = reader.ReadInt32();
+                          int height2 = reader.ReadInt32();
+                          int len2 = width2 * height2;
+                          byte[] pixels2 = reader.ReadBytes(len2);
+
+                          // Process directly via SourceAFIS raw grayscale engine
+                          var image1 = new FingerprintImage(width1, height1, pixels1);
+                          var image2 = new FingerprintImage(width2, height2, pixels2);
+
+                          var template1 = new FingerprintTemplate(image1);
+                          var template2 = new FingerprintTemplate(image2);
+
+                          var matcher = new FingerprintMatcher(template1);
+                          double score = matcher.Match(template2);
+
+                          // Print only the final numeric score to stdout for easy Python parsing
+                          Console.Write(score.ToString("F2"));
+                          return 0;
                       }
                   }
                   catch (Exception ex)
                   {
-                      Console.WriteLine($"Execution error: {ex.Message}");
+                      Console.Error.WriteLine($"Error: {ex.Message}");
                       return 1;
                   }
               }
