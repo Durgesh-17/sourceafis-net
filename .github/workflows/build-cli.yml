@@ -1,0 +1,107 @@
+name: Build Standalone Linux CLI
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch: # Allows manual trigger via the GitHub UI
+
+jobs:
+  build-executable:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Auto-Generate Console Wrapper Application
+        run: |
+          # 1. Create a clean console project
+          dotnet new console -n FingerprintCli -o ./FingerprintCli
+          cd FingerprintCli
+          
+          # 2. Add the official SourceAFIS package dependency
+          dotnet add package SourceAFIS --version 3.14.0
+          
+          # 3. Overwrite Program.cs with the CLI logic
+          cat << 'EOF' > Program.cs
+          using System;
+          using System.IO;
+          using SourceAFIS;
+
+          class Program
+          {
+              static int Main(string[] args)
+              {
+                  if (args.Length < 2)
+                  {
+                      Console.WriteLine("Error: Missing parameters.");
+                      Console.WriteLine("Usage: ./FingerprintCli <path_to_probe.png> <path_to_candidate.png>");
+                      return 1;
+                  }
+
+                  string probePath = args[0];
+                  string candidatePath = args[1];
+
+                  if (!File.Exists(probePath) || !File.Exists(candidatePath))
+                  {
+                      Console.WriteLine("Error: One or both files do not exist.");
+                      return 1;
+                  }
+
+                  try
+                  {
+                      // Load images (SourceAFIS handles decoding standard image bytes)
+                      var probeImage = new FingerprintImage(File.ReadAllBytes(probePath));
+                      var candidateImage = new FingerprintImage(File.ReadAllBytes(candidatePath));
+
+                      // Extract minutiae templates
+                      var probeTemplate = new FingerprintTemplate(probeImage);
+                      var candidateTemplate = new FingerprintTemplate(candidateImage);
+
+                      // Run the biometric 1:1 match evaluation
+                      var matcher = new FingerprintMatcher(probeTemplate);
+                      double score = matcher.Match(candidateTemplate);
+
+                      Console.WriteLine($"Similarity Score: {score:F2}");
+                      
+                      // Match threshold recommended by SourceAFIS is 40 (FMR 0.01%)
+                      if (score >= 40.0)
+                      {
+                          Console.WriteLine("STATUS: MATCH");
+                          return 0; 
+                      }
+                      else
+                      {
+                          Console.WriteLine("STATUS: MISMATCH");
+                          return 2; 
+                      }
+                  }
+                  catch (Exception ex)
+                  {
+                      Console.WriteLine($"Execution error: {ex.Message}");
+                      return 1;
+                  }
+              }
+          }
+          EOF
+
+      - name: Compile to Single Standalone Linux File
+        run: |
+          cd FingerprintCli
+          dotnet publish -c Release \
+                         -r linux-x64 \
+                         --self-contained true \
+                         -p:PublishSingleFile=true \
+                         -p:PublishTrimmed=true \
+                         -o ../dist-output
+
+      - name: Upload Finished Executable Asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-cli
+          path: ./dist-output/FingerprintCli
