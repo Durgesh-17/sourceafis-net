@@ -10,12 +10,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+          
+      - name: Restore dependencies
+        run: dotnet restore
+        
       - name: Build
-        run: dotnet build
+        run: dotnet build --no-restore -c Release
+        
       - name: Test
-        run: dotnet test
-      - name: Package
-        run: dotnet pack
+        run: dotnet test --no-build -c Release
+        
+      # Replaced 'dotnet pack' with 'dotnet publish' for standalone deployment
+      - name: Publish Standalone Linux Binary
+        run: |
+          dotnet publish -c Release \
+                         -r linux-x64 \
+                         --self-contained true \
+                         -o ./publish-output
+                         
+      # Optional: Uploads the published files as a downloadable GitHub artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-linux-app
+          path: ./publish-output
